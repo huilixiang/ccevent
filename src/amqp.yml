@@ -1,0 +1,8 @@
+host: rbmqv1.pre.gomeplus.com
+port: 5672
+vhost: /bs-arch
+username: bsarch
+password: bsarch
+routingkey: couponcc
+queue: couponcc.q
+exchange: couponcc.ex
