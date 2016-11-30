@@ -23,6 +23,8 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/gogap/logrus"
+	"github.com/gogap/logrus/hooks/file"
 	"github.com/hyperledger/fabric/events/consumer"
 	pb "github.com/hyperledger/fabric/protos"
 	"os"
@@ -39,7 +41,10 @@ type adapter struct {
 type cc_message struct {
 	Type string   `json:"type,omitempty"`
 	Txs  []string `json:"txs,omitempty"`
+	Msg  string   `json:"msg,omitempty"`
 }
+
+var logger = logrus.New()
 
 //GetInterestedEvents implements consumer.EventAdapter interface for registering interested events
 func (a *adapter) GetInterestedEvents() ([]*pb.Interest, error) {
@@ -81,7 +86,7 @@ func (a *adapter) Disconnected(err error) {
 	os.Exit(1)
 }
 
-func createEventClient(eventAddress string, listenToRejections bool, cid string) *adapter {
+func createEventClient(eventAddress string, listenToRejections bool, cid string) (*adapter, error) {
 	var obcEHClient *consumer.EventsClient
 
 	done := make(chan *pb.Event_Block)
@@ -91,77 +96,120 @@ func createEventClient(eventAddress string, listenToRejections bool, cid string)
 	if err := obcEHClient.Start(); err != nil {
 		fmt.Printf("could not start chat %s\n", err)
 		obcEHClient.Stop()
-		return nil
+		return nil, err
 	}
 
-	return adapter
+	return adapter, nil
 }
 
+func initLog(logFile, logLevel string) {
+	logger.Formatter = new(logrus.JSONFormatter)
+	//logger.Formatter = new(logrus.TextFormatter) // default
+	switch logLevel {
+	case "DEBUG":
+		logger.Level = logrus.DebugLevel
+	case "INFO":
+		logger.Level = logrus.InfoLevel
+	case "WARN":
+		logger.Level = logrus.WarnLevel
+	case "ERROR":
+		logger.Level = logrus.ErrorLevel
+	case "FATAL":
+		logger.Level = logrus.FatalLevel
+	case "PANIC":
+		logger.Level = logrus.PanicLevel
+	default:
+		logger.Level = logrus.InfoLevel
+	}
+	logger.Hooks.Add(file.NewHook(logFile))
+}
 func main() {
 	var eventAddress string
 	var listenToRejections bool
 	var chaincodeID string
 	var amqpFile string
+	var logFile string
+	var logLevel string
 	pubChan := make(chan string)
 	flag.StringVar(&eventAddress, "events-address", "0.0.0.0:7053", "address of events server")
 	flag.BoolVar(&listenToRejections, "listen-to-rejections", false, "whether to listen to rejection events")
 	flag.StringVar(&chaincodeID, "events-from-chaincode", "", "listen to events from given chaincode")
 	flag.StringVar(&amqpFile, "amqp-file", "amqp.yaml", "amqp config file, yaml style")
+	flag.StringVar(&logFile, "log-file", "logs/ccevent.log", "log file")
+	flag.StringVar(&logLevel, "log-level", "DEBUG", "log level:  DEBUG, INFO, WARN, ERROR, FATAL, PANIC")
 	flag.Parse()
-
-	fmt.Printf("Event Address: %s\n", eventAddress)
+	initLog(logFile, logLevel)
 	p, err := NewPublisher(amqpFile, pubChan)
-	if err != nil {
-		fmt.Errorf("NewPublisher: %v", err)
+	if err != nil || p == nil {
+		logger.Errorf("NewPublisher: %v", err)
 		return
+	} else {
+		logger.Info("publisher created..")
+
 	}
-	a := createEventClient(eventAddress, listenToRejections, chaincodeID)
-	if a == nil {
-		fmt.Printf("Error creating event client\n")
+	a, err := createEventClient(eventAddress, listenToRejections, chaincodeID)
+	if err != nil {
+		logger.Errorf("Error creating event client: [%v]", err)
 		return
+	} else {
+		logger.Info("chatting with cc.....")
+
 	}
 	p.SpinSend()
 	for {
 		select {
 		case b := <-a.notfy:
-			fmt.Printf("\n")
-			fmt.Printf("\n")
-			fmt.Printf("Received block\n")
-			fmt.Printf("--------------\n")
+			//block created event
 			txCount := len(b.Block.Transactions)
 			txs := make([]string, txCount, txCount)
 			i := 0
 			for _, r := range b.Block.Transactions {
-				fmt.Printf("Transaction:\n\t[%v]\n", r)
+				logger.WithFields(logrus.Fields{
+					"event": "BLOCK_EVENT",
+					"type":  "EACH_TX",
+					"txID":  r.Txid,
+				}).Infof("Transaction: [%v]", r)
 				txs[i] = r.Txid
 				i++
 			}
 			cc_msg := &cc_message{Type: "BLOCK_EVENT", Txs: txs}
 			bytes, err := json.Marshal(cc_msg)
 			if err != nil {
-				fmt.Errorf("json marshal:%v", err)
+				logger.WithFields(logrus.Fields{
+					"event": "BLOCK_EVENT",
+					"type":  "PUB_TXS",
+				}).Warnf("json marshal err: [%v]", err)
 			}
-			fmt.Printf("json-msg:%s", string(bytes))
+			logger.Debugf("publish json msg: [%s]", string(bytes))
 			pubChan <- string(bytes)
 		case r := <-a.rejected:
-			fmt.Printf("\n")
-			fmt.Printf("\n")
-			fmt.Printf("Received rejected transaction\n")
-			fmt.Printf("--------------\n")
-			fmt.Printf("Transaction error:\n%s\t%s\n", r.Rejection.Tx.Txid, r.Rejection.ErrorMsg)
-			cc_msg := &cc_message{Type: "REJECTION", Txs: []string{r.Rejection.Tx.Txid}}
+			logger.WithFields(logrus.Fields{
+				"event": "REJECTION_EVETN",
+				"txID":  r.Rejection.Tx.Txid,
+			}).Warnf("tx rejected: [%s]", r.Rejection.ErrorMsg)
+			cc_msg := &cc_message{Type: "REJECTION_EVENT", Txs: []string{r.Rejection.Tx.Txid}, Msg: r.Rejection.ErrorMsg}
 			bytes, err := json.Marshal(cc_msg)
 			if err != nil {
-				fmt.Errorf("json marshal:%v", err)
+				logger.WithFields(logrus.Fields{
+					"event": "REJECTION_EVENT",
+					"type":  "PUB_TX",
+				}).Warnf("json marshal err: [%v]", err)
 			}
-			fmt.Printf("json-msg:%s", string(bytes))
+			logger.Debugf("json-msg:%s", string(bytes))
 			pubChan <- string(bytes)
 		case ce := <-a.cEvent:
-			fmt.Printf("\n")
-			fmt.Printf("\n")
-			fmt.Printf("Received chaincode event\n")
-			fmt.Printf("------------------------\n")
-			fmt.Printf("Chaincode Event:%v\n", ce)
+			logger.WithFields(logrus.Fields{
+				"event": "CHAINCODE_EVENT",
+			}).Infof("chaincode event: [%v]", ce.ChaincodeEvent)
+			cc_msg := &cc_message{Type: "CHAINCODE_EVENT", Txs: []string{ce.ChaincodeEvent.TxID}}
+			bytes, err := json.Marshal(cc_msg)
+			if err != nil {
+				logger.WithFields(logrus.Fields{
+					"event": "CHAINCODE_EVENT",
+					"type":  "PUB_TX",
+				}).Warnf("json marshal err: [%v]", err)
+			}
+			pubChan <- string(bytes)
 		}
 	}
 }
