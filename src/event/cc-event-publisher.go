@@ -5,10 +5,10 @@ package main
 import (
 	"errors"
 	"fmt"
+	"github.com/gogap/logrus"
 	"github.com/streadway/amqp"
 	yaml "gopkg.in/yaml.v2"
 	"io/ioutil"
-	"log"
 	"time"
 )
 
@@ -32,10 +32,13 @@ type publisher struct {
 	pin     <-chan string
 }
 
-func NewPublisher(cfgFile string, pin <-chan string) (*publisher, error) {
+var log *logrus.Logger
+
+func NewPublisher(cfgFile string, pin <-chan string, logger *logrus.Logger) (*publisher, error) {
+	log = logger
 	cfg, err := loadCfg(cfgFile)
 	if err != nil {
-		log.Printf("loadCfg err:%v", err.Error())
+		log.Errorf("loadCfg err:%v", err.Error())
 		return nil, err
 	}
 	p := &publisher{
@@ -45,7 +48,7 @@ func NewPublisher(cfgFile string, pin <-chan string) (*publisher, error) {
 	}
 	err = p.connect()
 	if err != nil {
-		log.Fatalf("connect %v", err)
+		log.Errorf("connect %v", err)
 		return nil, err
 	}
 	err = p.AnnounceQueue()

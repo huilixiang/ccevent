@@ -139,7 +139,7 @@ func main() {
 	flag.StringVar(&logLevel, "log-level", "DEBUG", "log level:  DEBUG, INFO, WARN, ERROR, FATAL, PANIC")
 	flag.Parse()
 	initLog(logFile, logLevel)
-	p, err := NewPublisher(amqpFile, pubChan)
+	p, err := NewPublisher(amqpFile, pubChan, logger)
 	if err != nil || p == nil {
 		logger.Errorf("NewPublisher: %v", err)
 		return
