@@ -20,5 +20,5 @@ function main() {
 	done
 
 }
-#main
-start_lsn
+main
+#start_lsn
