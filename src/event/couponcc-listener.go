@@ -25,13 +25,14 @@ import (
 	"fmt"
 	"github.com/gogap/logrus"
 	"github.com/gogap/logrus/hooks/file"
+	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/events/consumer"
 	pb "github.com/hyperledger/fabric/protos"
 	"os"
 )
 
 type adapter struct {
-	notfy              chan *pb.Event_Block
+	notify             chan *pb.Event_Block
 	rejected           chan *pb.Event_Rejection
 	cEvent             chan *pb.Event_ChaincodeEvent
 	listenToRejections bool
@@ -39,9 +40,9 @@ type adapter struct {
 }
 
 type cc_message struct {
-	Type string   `json:"type,omitempty"`
-	Txs  []string `json:"txs,omitempty"`
-	Msg  string   `json:"msg,omitempty"`
+	Type    string `json:"type,omitempty"`
+	Txid    string `json:"txid,omitempty"`
+	Payload string `json:"payload,omitempty"`
 }
 
 var logger = logrus.New()
@@ -64,7 +65,7 @@ func (a *adapter) GetInterestedEvents() ([]*pb.Interest, error) {
 //Recv implements consumer.EventAdapter interface for receiving events
 func (a *adapter) Recv(msg *pb.Event) (bool, error) {
 	if o, e := msg.Event.(*pb.Event_Block); e {
-		a.notfy <- o
+		a.notify <- o
 		return true, nil
 	}
 	if o, e := msg.Event.(*pb.Event_Rejection); e {
@@ -91,7 +92,7 @@ func createEventClient(eventAddress string, listenToRejections bool, cid string)
 
 	done := make(chan *pb.Event_Block)
 	reject := make(chan *pb.Event_Rejection)
-	adapter := &adapter{notfy: done, rejected: reject, listenToRejections: listenToRejections, chaincodeID: cid, cEvent: make(chan *pb.Event_ChaincodeEvent)}
+	adapter := &adapter{notify: done, rejected: reject, listenToRejections: listenToRejections, chaincodeID: cid, cEvent: make(chan *pb.Event_ChaincodeEvent)}
 	obcEHClient, _ = consumer.NewEventsClient(eventAddress, 5, adapter)
 	if err := obcEHClient.Start(); err != nil {
 		fmt.Printf("could not start chat %s\n", err)
@@ -123,6 +124,52 @@ func initLog(logFile, logLevel string) {
 	}
 	logger.Hooks.Add(file.NewHook(logFile))
 }
+
+func pubEvent(eventType string, chanType string, tx *pb.Transaction, pubChan chan string) error {
+	logger.WithFields(logrus.Fields{
+		"event": eventType,
+		"type":  chanType,
+		"txID":  tx.Txid,
+	}).Infof("Transaction: [%v]", tx)
+	txJson, err := tx2Json(tx)
+	if err != nil {
+		logger.Warnf("Marshal tx: [%s], error: [%v]", tx.Txid, err)
+		return nil
+	}
+	return pubTxMsg("BLOCK_EVENT", tx.Txid, txJson, pubChan)
+
+}
+
+func tx2Json(tx *pb.Transaction) (string, error) {
+	ccis := &pb.ChaincodeInvocationSpec{}
+	err := proto.Unmarshal(tx.Payload, ccis)
+	if err != nil {
+		logger.Warnf("Unmarshal tx: [%s], error: [%v]", tx.Txid, err)
+		return "", err
+	}
+	txJson, err := proto.Marshal(ccis)
+	if err != nil {
+		logger.Warnf("Marshal tx: [%s], error: [%v]", tx.Txid, err)
+		return "", err
+	}
+	return string(txJson), nil
+}
+
+func pubTxMsg(eventType string, txid string, payload string, pubChan chan string) error {
+	cc_msg := &cc_message{Type: eventType, Txid: txid, Payload: payload}
+	bytes, err := json.Marshal(cc_msg)
+	if err != nil {
+		logger.WithFields(logrus.Fields{
+			"event": eventType,
+			"type":  "PUB_TX",
+		}).Warnf("json marshal err: [%v]", err)
+		return err
+	}
+	logger.Debugf("publish json msg: [%s]", string(bytes))
+	pubChan <- string(bytes)
+	return nil
+}
+
 func main() {
 	var eventAddress string
 	var listenToRejections bool
@@ -158,55 +205,23 @@ func main() {
 	p.SpinSend()
 	for {
 		select {
-		case b := <-a.notfy:
+		case b := <-a.notify:
 			//block created event
-			txCount := len(b.Block.Transactions)
-			txs := make([]string, txCount, txCount)
-			i := 0
-			for _, r := range b.Block.Transactions {
-				logger.WithFields(logrus.Fields{
-					"event": "BLOCK_EVENT",
-					"type":  "EACH_TX",
-					"txID":  r.Txid,
-				}).Infof("Transaction: [%v]", r)
-				txs[i] = r.Txid
-				i++
+			for _, tx := range b.Block.Transactions {
+				pubEvent("BLOCK_EVENT", "notify", tx, pubChan)
 			}
-			cc_msg := &cc_message{Type: "BLOCK_EVENT", Txs: txs}
-			bytes, err := json.Marshal(cc_msg)
-			if err != nil {
-				logger.WithFields(logrus.Fields{
-					"event": "BLOCK_EVENT",
-					"type":  "PUB_TXS",
-				}).Warnf("json marshal err: [%v]", err)
-			}
-			logger.Debugf("publish json msg: [%s]", string(bytes))
-			pubChan <- string(bytes)
 		case r := <-a.rejected:
-			logger.WithFields(logrus.Fields{
-				"event": "REJECTION_EVETN",
-				"txID":  r.Rejection.Tx.Txid,
-			}).Warnf("tx rejected: [%s]", r.Rejection.ErrorMsg)
-			cc_msg := &cc_message{Type: "REJECTION_EVENT", Txs: []string{r.Rejection.Tx.Txid}, Msg: r.Rejection.ErrorMsg}
-			bytes, err := json.Marshal(cc_msg)
-			if err != nil {
-				logger.WithFields(logrus.Fields{
-					"event": "REJECTION_EVENT",
-					"type":  "PUB_TX",
-				}).Warnf("json marshal err: [%v]", err)
-			}
-			logger.Debugf("json-msg:%s", string(bytes))
-			pubChan <- string(bytes)
+			pubEvent("REJECTION_EVETN", "rejected", r.Rejection.Tx, pubChan)
 		case ce := <-a.cEvent:
 			logger.WithFields(logrus.Fields{
 				"event": "CHAINCODE_EVENT",
-			}).Infof("chaincode event: [%v]", ce.ChaincodeEvent)
-			cc_msg := &cc_message{Type: "CHAINCODE_EVENT", Txs: []string{ce.ChaincodeEvent.TxID}}
+			}).Infof("chaincode event: [%v]", ce.ChaincodeEvent.String())
+			cc_msg := &cc_message{Type: "CHAINCODE_EVENT", Txid: ce.ChaincodeEvent.TxID, Payload: ce.ChaincodeEvent.String()}
 			bytes, err := json.Marshal(cc_msg)
 			if err != nil {
 				logger.WithFields(logrus.Fields{
 					"event": "CHAINCODE_EVENT",
-					"type":  "PUB_TX",
+					"type":  "cEvent",
 				}).Warnf("json marshal err: [%v]", err)
 			}
 			pubChan <- string(bytes)

@@ -14,6 +14,7 @@ CONF_FILE := $(shell cp src/*.yml $(OUTPUT))
 AMQP_PKGS := $(shell go get github.com/streadway/amqp)
 YAML_PKGS := $(shell go get gopkg.in/yaml.v2)
 LOG_PKGS := $(shell go get github.com/gogap/logrus)
+PROTO_PKGS := $(shell go get github.com/golang/protobuf/proto)
 .DEFAULT_GOAL: $(BINARY)
 $(BINARY): $(SOURCES) $(CONF_FILE) $(AMQP_PKGS) $(YAML_PKGS) $(LOG_PKGS)
 	go build ${LDFLAGS} -o ${BINARY} src/event/*.go
