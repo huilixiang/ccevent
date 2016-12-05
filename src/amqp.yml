@@ -3,6 +3,6 @@ port: 5672
 vhost: /bs-arch
 username: bsarch
 password: bsarch
-routingkey: couponcc
-queue: couponcc.q
-exchange: couponcc.ex
+routingkey: bs.blockchain.couponcc
+queue: bs.blockchain.couponcc
+exchange: msg.topic
