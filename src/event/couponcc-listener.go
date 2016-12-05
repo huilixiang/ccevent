@@ -40,9 +40,9 @@ type adapter struct {
 }
 
 type cc_message struct {
-	Type    string `json:"type,omitempty"`
-	Txid    string `json:"txid,omitempty"`
-	Payload string `json:"payload,omitempty"`
+	Type    string   `json:"type,omitempty"`
+	Txid    string   `json:"txid,omitempty"`
+	Payload []string `json:"payload,omitempty"`
 }
 
 var logger = logrus.New()
@@ -140,18 +140,23 @@ func pubEvent(eventType string, chanType string, tx *pb.Transaction, pubChan cha
 
 }
 
-func tx2Json(tx *pb.Transaction) (string, error) {
+func tx2Json(tx *pb.Transaction) ([]string, error) {
 	ccis := &pb.ChaincodeInvocationSpec{}
 	err := proto.Unmarshal(tx.Payload, ccis)
 	if err != nil {
 		logger.Warnf("Unmarshal tx: [%s], error: [%v]", tx.Txid, err)
-		return "", err
+		return nil, err
 	}
 	cm := ccis.ChaincodeSpec.GetCtorMsg()
-	return cm.String(), nil
+	txArgs := cm.Args
+	payloads := make([]string, len(txArgs))
+	for index, ta := range txArgs {
+		payloads[index] = string(ta)
+	}
+	return payloads, nil
 }
 
-func pubTxMsg(eventType, chanType, txid, payload string, pubChan chan string) error {
+func pubTxMsg(eventType, chanType, txid string, payload []string, pubChan chan string) error {
 	cc_msg := &cc_message{Type: eventType, Txid: txid, Payload: payload}
 	bytes, err := json.Marshal(cc_msg)
 	if err != nil {
@@ -212,7 +217,7 @@ func main() {
 			logger.WithFields(logrus.Fields{
 				"event": "CHAINCODE_EVENT",
 			}).Infof("chaincode event: [%v]", ce.ChaincodeEvent.String())
-			cc_msg := &cc_message{Type: "CHAINCODE_EVENT", Txid: ce.ChaincodeEvent.TxID, Payload: ce.ChaincodeEvent.String()}
+			cc_msg := &cc_message{Type: "CHAINCODE_EVENT", Txid: ce.ChaincodeEvent.TxID, Payload: []string{string(ce.ChaincodeEvent.Payload)}}
 			bytes, err := json.Marshal(cc_msg)
 			if err != nil {
 				logger.WithFields(logrus.Fields{
