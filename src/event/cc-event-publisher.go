@@ -118,7 +118,7 @@ func (p *publisher) connect() error {
 	log.Printf("got channel, declaring exchange:%s", p.cfg.Exchange)
 	if err = p.channel.ExchangeDeclare(
 		p.cfg.Exchange, // exchange name
-		"direct",       // exchange type
+		"topic",        // exchange type
 		true,           // durable
 		false,          // autoDelete
 		false,          // internal
