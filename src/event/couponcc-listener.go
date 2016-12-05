@@ -104,8 +104,8 @@ func createEventClient(eventAddress string, listenToRejections bool, cid string)
 }
 
 func initLog(logFile, logLevel string) {
-	logger.Formatter = new(logrus.JSONFormatter)
-	//logger.Formatter = new(logrus.TextFormatter) // default
+	//logger.Formatter = new(logrus.JSONFormatter)
+	logger.Formatter = new(logrus.TextFormatter) // default
 	switch logLevel {
 	case "DEBUG":
 		logger.Level = logrus.DebugLevel
@@ -136,7 +136,7 @@ func pubEvent(eventType string, chanType string, tx *pb.Transaction, pubChan cha
 		logger.Warnf("Marshal tx: [%s], error: [%v]", tx.Txid, err)
 		return nil
 	}
-	return pubTxMsg("BLOCK_EVENT", tx.Txid, txJson, pubChan)
+	return pubTxMsg(eventType, chanType, tx.Txid, txJson, pubChan)
 
 }
 
@@ -147,25 +147,21 @@ func tx2Json(tx *pb.Transaction) (string, error) {
 		logger.Warnf("Unmarshal tx: [%s], error: [%v]", tx.Txid, err)
 		return "", err
 	}
-	txJson, err := proto.Marshal(ccis)
-	if err != nil {
-		logger.Warnf("Marshal tx: [%s], error: [%v]", tx.Txid, err)
-		return "", err
-	}
-	return string(txJson), nil
+	cm := ccis.ChaincodeSpec.GetCtorMsg()
+	return cm.String(), nil
 }
 
-func pubTxMsg(eventType string, txid string, payload string, pubChan chan string) error {
+func pubTxMsg(eventType, chanType, txid, payload string, pubChan chan string) error {
 	cc_msg := &cc_message{Type: eventType, Txid: txid, Payload: payload}
 	bytes, err := json.Marshal(cc_msg)
 	if err != nil {
 		logger.WithFields(logrus.Fields{
 			"event": eventType,
-			"type":  "PUB_TX",
+			"type":  chanType,
 		}).Warnf("json marshal err: [%v]", err)
 		return err
 	}
-	logger.Debugf("publish json msg: [%s]", string(bytes))
+	logger.Infof("publish json msg: [%s]", string(bytes))
 	pubChan <- string(bytes)
 	return nil
 }
@@ -211,7 +207,7 @@ func main() {
 				pubEvent("BLOCK_EVENT", "notify", tx, pubChan)
 			}
 		case r := <-a.rejected:
-			pubEvent("REJECTION_EVETN", "rejected", r.Rejection.Tx, pubChan)
+			pubEvent("REJECTION_EVENT", "rejected", r.Rejection.Tx, pubChan)
 		case ce := <-a.cEvent:
 			logger.WithFields(logrus.Fields{
 				"event": "CHAINCODE_EVENT",

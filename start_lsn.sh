@@ -20,4 +20,5 @@ function main() {
 	done
 
 }
-main
+#main
+start_lsn
