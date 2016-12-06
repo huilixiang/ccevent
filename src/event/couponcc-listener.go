@@ -40,9 +40,10 @@ type adapter struct {
 }
 
 type cc_message struct {
-	Type    string   `json:"type,omitempty"`
-	Txid    string   `json:"txid,omitempty"`
-	Payload []string `json:"payload,omitempty"`
+	Type     string   `json:"type,omitempty"`
+	Txid     string   `json:"txid,omitempty"`
+	Payload  []string `json:"payload,omitempty"`
+	ErrorMsg string   `json:"error,omitempty"`
 }
 
 var logger = logrus.New()
@@ -125,18 +126,18 @@ func initLog(logFile, logLevel string) {
 	logger.Hooks.Add(file.NewHook(logFile))
 }
 
-func pubEvent(eventType string, chanType string, tx *pb.Transaction, pubChan chan string) error {
+func pubEvent(eventType string, chanType string, tx *pb.Transaction, pubChan chan string, errorMsg string) error {
 	logger.WithFields(logrus.Fields{
 		"event": eventType,
 		"type":  chanType,
 		"txID":  tx.Txid,
-	}).Infof("Transaction: [%v]", tx)
+	}).Infof("Transaction: [%v], msg: [%s]", tx, errorMsg)
 	txJson, err := tx2Json(tx)
 	if err != nil {
 		logger.Warnf("Marshal tx: [%s], error: [%v]", tx.Txid, err)
 		return nil
 	}
-	return pubTxMsg(eventType, chanType, tx.Txid, txJson, pubChan)
+	return pubTxMsg(eventType, chanType, tx.Txid, txJson, pubChan, errorMsg)
 
 }
 
@@ -156,8 +157,8 @@ func tx2Json(tx *pb.Transaction) ([]string, error) {
 	return payloads, nil
 }
 
-func pubTxMsg(eventType, chanType, txid string, payload []string, pubChan chan string) error {
-	cc_msg := &cc_message{Type: eventType, Txid: txid, Payload: payload}
+func pubTxMsg(eventType, chanType, txid string, payload []string, pubChan chan string, errorMsg string) error {
+	cc_msg := &cc_message{Type: eventType, Txid: txid, Payload: payload, ErrorMsg: errorMsg}
 	bytes, err := json.Marshal(cc_msg)
 	if err != nil {
 		logger.WithFields(logrus.Fields{
@@ -209,15 +210,15 @@ func main() {
 		case b := <-a.notify:
 			//block created event
 			for _, tx := range b.Block.Transactions {
-				pubEvent("BLOCK_EVENT", "notify", tx, pubChan)
+				pubEvent("BLOCK_EVENT", "notify", tx, pubChan, "")
 			}
 		case r := <-a.rejected:
-			pubEvent("REJECTION_EVENT", "rejected", r.Rejection.Tx, pubChan)
+			pubEvent("REJECTION_EVENT", "rejected", r.Rejection.Tx, pubChan, r.Rejection.ErrorMsg)
 		case ce := <-a.cEvent:
 			logger.WithFields(logrus.Fields{
 				"event": "CHAINCODE_EVENT",
 			}).Infof("chaincode event: [%v]", ce.ChaincodeEvent.String())
-			cc_msg := &cc_message{Type: "CHAINCODE_EVENT", Txid: ce.ChaincodeEvent.TxID, Payload: []string{string(ce.ChaincodeEvent.Payload)}}
+			cc_msg := &cc_message{Type: "CHAINCODE_EVENT", Txid: ce.ChaincodeEvent.TxID, Payload: []string{string(ce.ChaincodeEvent.Payload)}, ErrorMsg: ""}
 			bytes, err := json.Marshal(cc_msg)
 			if err != nil {
 				logger.WithFields(logrus.Fields{
