@@ -162,7 +162,7 @@ func (p *publisher) publish(pmsg string) error {
 		DeliveryMode: amqp.Persistent,
 		Timestamp:    time.Now(),
 		ContentType:  "text/plain",
-		Body:         []byte("Go Go AMQP!"),
+		Body:         []byte(pmsg),
 	}
 	err := p.channel.Publish(p.cfg.Exchange, p.cfg.RoutingKey, false, false, msg)
 	if err != nil {
