@@ -1,6 +1,6 @@
 #!/bin/bash
 #ccevent代码版本号
-CCEVENT_TAG=1.0.0
+CCEVENT_TAG=1.0.1
 #gitlab地址
 CCEVENT_REPO=http://gitlab.intra.gomeplus.com/huajie/ccevent.git
 #依赖的fabric镜像
